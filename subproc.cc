@@ -209,6 +209,7 @@ static void addProc(nsjconf_t* nsjconf, pid_t pid, int sock) {
 	pids_t p;
 
 	p.start = time(NULL);
+	p.start_point = std::chrono::steady_clock::now();
 	p.remote_txt = net::connToText(sock, /* remote= */ true, &p.remote_addr);
 
 	char fname[PATH_MAX];
@@ -312,23 +313,40 @@ static int reapProc(nsjconf_t* nsjconf, pid_t pid, bool should_wait = false) {
 	if (wait4(pid, &status, should_wait ? 0 : WNOHANG, NULL) == pid) {
 		if (nsjconf->use_cgroupv2) {
 			cgroup2::finishFromParent(nsjconf, pid);
+			// TODO:
+			//  reportCGroupStat doesn't support CGroup v2 currently
+			//  because memory.max_usage_in_bytes is not available in CGroup v2
 		} else {
+			cgroup::reportCGroupStat(nsjconf, pid);
 			cgroup::finishFromParent(nsjconf, pid);
 		}
 
 		std::string remote_txt = "[UNKNOWN]";
 		const auto& p = nsjconf->pids.find(pid);
 		if (p != nsjconf->pids.end()) {
-			remote_txt = p->second.remote_txt;
+			const pids_t& proc = p->second;
+			remote_txt = proc.remote_txt;
+			if (nsjconf->report_enabled) {
+				auto alive_duration = std::chrono::steady_clock::now() - proc.start_point;
+				logs::report("%d alive_time_ms %f", pid, alive_duration / std::chrono::nanoseconds(1) / 1.0e6);
+			}
 		}
 
 		if (WIFEXITED(status)) {
+			if (nsjconf->report_enabled) {
+				logs::report("%d exit_code %d", pid, WEXITSTATUS(status));
+				logs::report("%d exit_signal 0", pid);
+			}
 			LOG_I("pid=%d (%s) exited with status: %d, (PIDs left: %d)", pid,
 			    remote_txt.c_str(), WEXITSTATUS(status), countProc(nsjconf) - 1);
 			removeProc(nsjconf, pid);
 			return WEXITSTATUS(status);
 		}
 		if (WIFSIGNALED(status)) {
+			if (nsjconf->report_enabled) {
+				logs::report("%d exit_code 2147483647", pid);
+				logs::report("%d exit_signal %d", pid, WTERMSIG(status));
+			}
 			LOG_I("pid=%d (%s) terminated with signal: %s (%d), (PIDs left: %d)", pid,
 			    remote_txt.c_str(), util::sigName(WTERMSIG(status)).c_str(),
 			    WTERMSIG(status), countProc(nsjconf) - 1);

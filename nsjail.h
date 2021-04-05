@@ -32,6 +32,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <map>
 #include <string>
 #include <vector>
@@ -50,6 +51,7 @@ static const int nssigs[] = {
 
 struct pids_t {
 	time_t start;
+	std::chrono::time_point<std::chrono::steady_clock> start_point;
 	std::string remote_txt;
 	struct sockaddr_in6 remote_addr;
 	int pid_syscall_fd;
@@ -128,6 +130,7 @@ struct nsjconf_t {
 	bool is_root_rw;
 	bool is_silent;
 	bool stderr_to_null;
+	bool report_enabled;
 	bool skip_setsid;
 	unsigned int max_conns;
 	unsigned int max_conns_per_ip;
@@ -151,6 +154,8 @@ struct nsjconf_t {
 	std::string cgroup_cpu_mount;
 	std::string cgroup_cpu_parent;
 	unsigned int cgroup_cpu_ms_per_sec;
+	std::string cgroup_cpuacct_mount;
+	std::string cgroup_cpuacct_parent;
 	std::string cgroupv2_mount;
 	bool use_cgroupv2;
 	std::string kafel_file_path;

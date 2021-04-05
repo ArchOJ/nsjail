@@ -65,7 +65,7 @@ static bool addPidToTaskList(const std::string& cgroup_path, pid_t pid) {
 }
 
 static bool initNsFromParentMem(nsjconf_t* nsjconf, pid_t pid) {
-	if (nsjconf->cgroup_mem_max == (size_t)0) {
+	if (nsjconf->cgroup_mem_max == (size_t)0 && !nsjconf->report_enabled) {
 		return true;
 	}
 
@@ -73,16 +73,23 @@ static bool initNsFromParentMem(nsjconf_t* nsjconf, pid_t pid) {
 				      "/NSJAIL." + std::to_string(pid);
 	RETURN_ON_FAILURE(createCgroup(mem_cgroup_path, pid));
 
-	std::string mem_max_str = std::to_string(nsjconf->cgroup_mem_max);
-	RETURN_ON_FAILURE(writeToCgroup(
-	    mem_cgroup_path + "/memory.limit_in_bytes", mem_max_str, "memory cgroup max limit"));
+	if (nsjconf->cgroup_mem_max > 0) {
+		std::string mem_max_str = std::to_string(nsjconf->cgroup_mem_max);
+		RETURN_ON_FAILURE(writeToCgroup(
+		    mem_cgroup_path + "/memory.limit_in_bytes", mem_max_str, "memory cgroup max limit"));
 
-	/*
-	 * Use OOM-killer instead of making processes hang/sleep
-	 */
-	RETURN_ON_FAILURE(writeToCgroup(
-	    mem_cgroup_path + "/memory.oom_control", "0", "memory cgroup oom control"));
+		/*
+		 * Use OOM-killer instead of making processes hang/sleep
+		 */
+		RETURN_ON_FAILURE(writeToCgroup(
+		    mem_cgroup_path + "/memory.oom_control", "0", "memory cgroup oom control"));
 
+		/*
+		 * Force swap to be disabled so that the process is also killed as long as it reaches limit
+		 */
+		RETURN_ON_FAILURE(writeToCgroup(
+		    mem_cgroup_path + "/memory.swappiness", "0", "memory cgroup swappiness"));
+	}
 	return addPidToTaskList(mem_cgroup_path, pid);
 }
 
@@ -144,17 +151,48 @@ static bool initNsFromParentCpu(nsjconf_t* nsjconf, pid_t pid) {
 	return addPidToTaskList(cpu_cgroup_path, pid);
 }
 
+static bool initNsFromParentCpuAcct(nsjconf_t* nsjconf, pid_t pid) {
+	if (!nsjconf->report_enabled) {
+		return true;
+	}
+	std::string cpuacct_cgroup_path = nsjconf->cgroup_cpuacct_mount + '/' + nsjconf->cgroup_cpuacct_parent +
+			"/NSJAIL." + std::to_string(pid);
+	RETURN_ON_FAILURE(createCgroup(cpuacct_cgroup_path, pid));
+	return addPidToTaskList(cpuacct_cgroup_path, pid);
+}
+
 bool initNsFromParent(nsjconf_t* nsjconf, pid_t pid) {
 	RETURN_ON_FAILURE(initNsFromParentMem(nsjconf, pid));
 	RETURN_ON_FAILURE(initNsFromParentPids(nsjconf, pid));
 	RETURN_ON_FAILURE(initNsFromParentNetCls(nsjconf, pid));
+	RETURN_ON_FAILURE(initNsFromParentCpuAcct(nsjconf, pid));
 	return initNsFromParentCpu(nsjconf, pid);
 }
 
 static void removeCgroup(const std::string& cgroup_path) {
 	LOG_D("Remove '%s'", cgroup_path.c_str());
-	if (rmdir(cgroup_path.c_str()) == -1) {
+	if (rmdir(cgroup_path.c_str()) == -1 && errno != ENOENT) {
 		PLOG_W("rmdir('%s') failed", cgroup_path.c_str());
+	}
+}
+
+void reportCGroupStat(const nsjconf_t* nsjconf, pid_t pid) {
+	if (!nsjconf->report_enabled) {
+		return;
+	}
+
+	std::string mem_cgroup_path = nsjconf->cgroup_mem_mount + '/' +
+			nsjconf->cgroup_mem_parent + "/NSJAIL." + std::to_string(pid);
+	uint64_t mem_usage_bytes;
+	if (util::readUInt64(mem_cgroup_path + "/memory.max_usage_in_bytes", &mem_usage_bytes)) {
+		logs::report("%d mem_usage_bytes %" PRIu64, pid, mem_usage_bytes);
+	}
+
+	std::string cpuacct_cgroup_path = nsjconf->cgroup_cpuacct_mount + '/' +
+									  nsjconf->cgroup_cpuacct_parent + "/NSJAIL." + std::to_string(pid);
+	uint64_t cpu_time_ns;
+	if (util::readUInt64(cpuacct_cgroup_path + "/cpuacct.usage", &cpu_time_ns)) {
+		logs::report("%d cpu_time_ms %f", pid, cpu_time_ns / 1.0e6);
 	}
 }
 
@@ -176,6 +214,11 @@ void finishFromParent(nsjconf_t* nsjconf, pid_t pid) {
 						  nsjconf->cgroup_net_cls_parent + "/NSJAIL." +
 						  std::to_string(pid);
 		removeCgroup(net_cls_cgroup_path);
+	}
+	if (nsjconf->report_enabled) {
+		std::string cpuacct_cgroup_path = nsjconf->cgroup_cpuacct_mount + '/' +
+										  nsjconf->cgroup_cpuacct_parent + "/NSJAIL." + std::to_string(pid);
+		removeCgroup(cpuacct_cgroup_path);
 	}
 	if (nsjconf->cgroup_cpu_ms_per_sec != 0U) {
 		std::string cpu_cgroup_path = nsjconf->cgroup_cpu_mount + '/' +
