@@ -100,6 +100,9 @@ struct custom_option custom_opts[] = {
     { { "keep_caps", no_argument, NULL, 0x0501 }, "Don't drop any capabilities" },
     { { "cap", required_argument, NULL, 0x0509 }, "Retain this capability, e.g. CAP_PTRACE (can be specified multiple times)" },
     { { "silent", no_argument, NULL, 0x0502 }, "Redirect child process' fd:0/1/2 to /dev/null" },
+    { { "stdin", required_argument, NULL, 0x050a }, "Redirect stdin (fd:0) to file" },
+    { { "stdout", required_argument, NULL, 0x050b }, "Redirect stdout (fd:2) to file" },
+    { { "stderr", required_argument, NULL, 0x050c }, "Redirect stderr (fd:3) to file" },
     { { "stderr_to_null", no_argument, NULL, 0x0503 }, "Redirect child process' fd:2 (STDERR_FILENO) to /dev/null" },
     { { "skip_setsid", no_argument, NULL, 0x0504 }, "Don't call setsid(), allows for terminal signal handling in the sandboxed process. Dangerous" },
     { { "pass_fd", required_argument, NULL, 0x0505 }, "Don't close this FD before executing the child process (can be specified multiple times), by default: 0/1/2 are kept open" },
@@ -645,6 +648,15 @@ std::unique_ptr<nsjconf_t> parseArgs(int argc, char* argv[]) {
 			}
 			nsjconf->caps.push_back(cap);
 		} break;
+		case 0x050a:
+		    nsjconf->stdin_path = optarg;
+		    break;
+        case 0x050b:
+            nsjconf->stdout_path = optarg;
+            break;
+        case 0x050c:
+            nsjconf->stderr_path = optarg;
+            break;
 		case 0x0601:
 			nsjconf->is_root_rw = true;
 			break;

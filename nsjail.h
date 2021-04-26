@@ -129,6 +129,9 @@ struct nsjconf_t {
 	enum ns_mode_t mode;
 	bool is_root_rw;
 	bool is_silent;
+	std::string stdin_path;
+	std::string stdout_path;
+	std::string stderr_path;
 	bool stderr_to_null;
 	bool report_enabled;
 	bool skip_setsid;
